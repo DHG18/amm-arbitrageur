@@ -6,7 +6,7 @@ import deployer from './.secret';
 
 // const BSC_RPC = 'https://bsc-dataseed.binance.org/';
 const BSC_RPC = 'https://bsc-dataseed1.defibit.io/';
-const BSC_Tetsnet_RPC = 'https://data-seed-prebsc-1-s1.binance.org:8545/';
+const BSC_Testnet_RPC = 'https://data-seed-prebsc-1-s1.binance.org:8545/';
 
 const config: HardhatUserConfig = {
   solidity: { version: '0.7.6' },
@@ -22,7 +22,7 @@ const config: HardhatUserConfig = {
       },
     },
     bscTestnet: {
-      url: BSC_Tetsnet_RPC,
+      url: BSC_Testnet_RPC,
       chainId: 0x61,
       accounts: [deployer.private],
     },

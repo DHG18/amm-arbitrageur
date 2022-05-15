@@ -6,6 +6,7 @@ import { Contract } from '@ethersproject/contracts';
 import { ethers } from 'hardhat';
 
 import log from './log';
+import { exit } from 'process';
 
 export enum Network {
   BSC = 'bsc',
@@ -158,10 +159,23 @@ async function updatePairs(network: Network): Promise<ArbitragePair[]> {
   return allPairs;
 }
 
-function getPairsFile(network: Network) {
+
+// hardcoded pairs of interest into a json file
+// maybe this is for speed?
+function getPairsFile(network: Network) { 
   return path.join(__dirname, `../pairs-${network}.json`);
 }
 
+// Example return value:
+//[ 
+//{
+//   "symbols": "ETH-WBNB",
+//   "pairs": [
+//     "0x70D8929d04b60Af4fb9B58713eBcf18765aDE422",
+//     "0x82E8F9e7624fA038DfF4a39960F5197A43fa76aa"
+//   ]
+// }
+//]
 export async function tryLoadPairs(network: Network): Promise<ArbitragePair[]> {
   let pairs: ArbitragePair[] | null;
   const pairsFile = getPairsFile(network);

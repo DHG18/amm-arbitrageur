@@ -115,6 +115,7 @@ contract FlashBot is Ownable {
         return baseTokens.contains(token);
     }
 
+    // find out whether base token is token 0 or token 1 in the pools
     function isbaseTokenSmaller(address pool0, address pool1)
         internal
         view
@@ -124,15 +125,16 @@ contract FlashBot is Ownable {
             address quoteToken
         )
     {
-        require(pool0 != pool1, 'Same pair address');
-        (address pool0Token0, address pool0Token1) = (IUniswapV2Pair(pool0).token0(), IUniswapV2Pair(pool0).token1());
+        require(pool0 != pool1, 'Same pair address'); // has to be two different pools
+        (address pool0Token0, address pool0Token1) = (IUniswapV2Pair(pool0).token0(), IUniswapV2Pair(pool0).token1()); // initializing uni v2 pairs
         (address pool1Token0, address pool1Token1) = (IUniswapV2Pair(pool1).token0(), IUniswapV2Pair(pool1).token1());
-        require(pool0Token0 < pool0Token1 && pool1Token0 < pool1Token1, 'Non standard uniswap AMM pair');
-        require(pool0Token0 == pool1Token0 && pool0Token1 == pool1Token1, 'Require same token pair');
-        require(baseTokensContains(pool0Token0) || baseTokensContains(pool0Token1), 'No base token in pair');
+        require(pool0Token0 < pool0Token1 && pool1Token0 < pool1Token1, 'Non standard uniswap AMM pair'); // every standard uni v2 pair lists the smaller token first
+        require(pool0Token0 == pool1Token0 && pool0Token1 == pool1Token1, 'Require same token pair'); // tokens must line up with each other for swapping
+        require(baseTokensContains(pool0Token0) || baseTokensContains(pool0Token1), 'No base token in pair'); // have to have a base token!
 
+        // finally tells us which token is the base token
         (baseSmaller, baseToken, quoteToken) = baseTokensContains(pool0Token0)
-            ? (true, pool0Token0, pool0Token1)
+            ? (true, pool0Token0, pool0Token1) 
             : (false, pool0Token1, pool0Token0);
     }
 
@@ -151,13 +153,13 @@ contract FlashBot is Ownable {
             OrderedReserves memory orderedReserves
         )
     {
-        (uint256 pool0Reserve0, uint256 pool0Reserve1, ) = IUniswapV2Pair(pool0).getReserves();
-        (uint256 pool1Reserve0, uint256 pool1Reserve1, ) = IUniswapV2Pair(pool1).getReserves();
+        (uint256 pool0Reserve0, uint256 pool0Reserve1, ) = IUniswapV2Pair(pool0).getReserves(); // quantities of each token from pool0
+        (uint256 pool1Reserve0, uint256 pool1Reserve1, ) = IUniswapV2Pair(pool1).getReserves(); // quantities of each token from pool1
 
         // Calculate the price denominated in quote asset token
         (Decimal.D256 memory price0, Decimal.D256 memory price1) =
             baseTokenSmaller
-                ? (Decimal.from(pool0Reserve0).div(pool0Reserve1), Decimal.from(pool1Reserve0).div(pool1Reserve1))
+                ? (Decimal.from(pool0Reserve0).div(pool0Reserve1), Decimal.from(pool1Reserve0).div(pool1Reserve1)) // divides quantity of base token by quantity of quote token for each pool. now we can compare prices directly as on number
                 : (Decimal.from(pool0Reserve1).div(pool0Reserve0), Decimal.from(pool1Reserve1).div(pool1Reserve0));
 
         // get a1, b1, a2, b2 with following rule:
@@ -174,27 +176,46 @@ contract FlashBot is Ownable {
                 ? (pool1Reserve0, pool1Reserve1, pool0Reserve0, pool0Reserve1)
                 : (pool1Reserve1, pool1Reserve0, pool0Reserve1, pool0Reserve0);
         }
-        console.log('Borrow from pool:', lowerPool);
-        console.log('Sell to pool:', higherPool);
+        console.log('Borrow from pool:', lowerPool); // borrowing using flashswap from pool with lower price
+        console.log('Sell to pool:', higherPool); // sellign money on higher pool at higher price
     }
 
     /// @notice Do an arbitrage between two Uniswap-like AMM pools
     /// @dev Two pools must contains same token pair
     function flashArbitrage(address pool0, address pool1) external {
         ArbitrageInfo memory info;
-        (info.baseTokenSmaller, info.baseToken, info.quoteToken) = isbaseTokenSmaller(pool0, pool1);
-
+        // gets addresses of base and quote token, appropriately assigned. 
+        // example return: 
+        // [
+        //     true, 
+        //     "address of base token", 
+        //     "address of quote token"
+        // ]
+        (info.baseTokenSmaller, info.baseToken, info.quoteToken) = isbaseTokenSmaller(pool0, pool1); 
+        
         OrderedReserves memory orderedReserves;
-        (info.lowerPool, info.higherPool, orderedReserves) = getOrderedReserves(pool0, pool1, info.baseTokenSmaller);
+        // orders quantities of each token.
+        // example return:
+        // [
+        //     "address of lower pool",
+        //     "address of higher pool",
+        //     {
+        //         "a1": "address of base token in pool0",
+        //         "a2": "address of quote token in pool0",
+        //         "b1": "address of base token in pool1",
+        //         "b1": "address of quote token in pool1",
+        //     }
+        // ] 
+        (info.lowerPool, info.higherPool, orderedReserves) = getOrderedReserves(pool0, pool1, info.baseTokenSmaller); 
 
         // this must be updated every transaction for callback origin authentication
         permissionedPairAddress = info.lowerPool;
 
-        uint256 balanceBefore = IERC20(info.baseToken).balanceOf(address(this));
+        uint256 balanceBefore = IERC20(info.baseToken).balanceOf(address(this)); // get current balance of baseToken
 
         // avoid stack too deep error
-        {
-            uint256 borrowAmount = calcBorrowAmount(orderedReserves);
+        { // ??? why is this done within curly brackets
+            uint256 borrowAmount = calcBorrowAmount(orderedReserves); // calculates max profit for arbitrage, returns num in quoteToken
             (uint256 amount0Out, uint256 amount1Out) =
                 info.baseTokenSmaller ? (uint256(0), borrowAmount) : (borrowAmount, uint256(0));
             // borrow quote token on lower price pool, calculate how much debt we need to pay demoninated in base token
@@ -215,7 +236,7 @@ contract FlashBot is Ownable {
             callbackData.debtTokenOutAmount = baseTokenOutAmount;
 
             bytes memory data = abi.encode(callbackData);
-            IUniswapV2Pair(info.lowerPool).swap(amount0Out, amount1Out, address(this), data);
+            IUniswapV2Pair(info.lowerPool).swap(amount0Out, amount1Out, address(this), data); // sending quote token in, getting base token out
         }
 
         uint256 balanceAfter = IERC20(info.baseToken).balanceOf(address(this));
@@ -251,15 +272,15 @@ contract FlashBot is Ownable {
 
     /// @notice Calculate how much profit we can by arbitraging between two pools
     function getProfit(address pool0, address pool1) external view returns (uint256 profit, address baseToken) {
-        (bool baseTokenSmaller, , ) = isbaseTokenSmaller(pool0, pool1);
-        baseToken = baseTokenSmaller ? IUniswapV2Pair(pool0).token0() : IUniswapV2Pair(pool0).token1();
+        (bool baseTokenSmaller, , ) = isbaseTokenSmaller(pool0, pool1); // finds which pool the base token is smaller in
+        baseToken = baseTokenSmaller ? IUniswapV2Pair(pool0).token0() : IUniswapV2Pair(pool0).token1(); // gets address of baseToken
 
-        (, , OrderedReserves memory orderedReserves) = getOrderedReserves(pool0, pool1, baseTokenSmaller);
+        (, , OrderedReserves memory orderedReserves) = getOrderedReserves(pool0, pool1, baseTokenSmaller); // gets ordered reserves object
 
-        uint256 borrowAmount = calcBorrowAmount(orderedReserves);
-        // borrow quote token on lower price pool,
-        uint256 debtAmount = getAmountIn(borrowAmount, orderedReserves.a1, orderedReserves.b1);
-        // sell borrowed quote token on higher price pool
+        uint256 borrowAmount = calcBorrowAmount(orderedReserves); // optimal borrow amount of baseToken
+        // borrow quote token on lower pool
+        uint256 debtAmount = getAmountIn(borrowAmount, orderedReserves.a1, orderedReserves.b1); 
+        // sell quote token on higher pool for profit in base token
         uint256 baseTokenOutAmount = getAmountOut(borrowAmount, orderedReserves.b2, orderedReserves.a2);
         if (baseTokenOutAmount < debtAmount) {
             profit = 0;
@@ -307,6 +328,7 @@ contract FlashBot is Ownable {
             d = 1e10;
         }
 
+        // dividing by d to avoid under / overflow
         (int256 a1, int256 a2, int256 b1, int256 b2) =
             (int256(reserves.a1 / d), int256(reserves.a2 / d), int256(reserves.b1 / d), int256(reserves.b2 / d));
 
